@@ -1,0 +1,6 @@
+{
+  "name": "WELLBE+ Mobile & Watch Mockup Showcase",
+  "description": "Interactive side-by-side smartphone and circular Google Pixel Watch mockup showcase for WELLBE+ with studio lighting, synchronized hardware bezel finishes, and clean screenshot capture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
