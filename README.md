@@ -2,10 +2,6 @@
 
 Interactive dual-device mockup showcase for **WELLBE+**, pairing live mobile (`wellbe-mobile`) and smartwatch (`wellbe-watch`) frames with studio gradients, bezel finish controls, and clean UI-free screenshot export.
 
-- **Mobile Demo Source:** [wellbe-mobile.micahsamter.com](https://wellbe-mobile.micahsamter.com)
-- **Watch Demo Source:** [wellbe-watch.micahsamter.com](https://wellbe-watch.micahsamter.com)
-- **Portfolio Showcase:** [micahsamter.com](https://micahsamter.com)
-
 ## Key Features
 
 - **Side-by-Side Device Stage:** Displays the mobile prototype on the left and the circular smartwatch prototype on the right inside live interactive frames.
@@ -17,9 +13,3 @@ Interactive dual-device mockup showcase for **WELLBE+**, pairing live mobile (`w
 
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS
 - **Authoring & Deployment:** Built in Google AI Studio and deployed on Vercel
-
-## Local Development
-
-```bash
-npm install
-npm run dev
