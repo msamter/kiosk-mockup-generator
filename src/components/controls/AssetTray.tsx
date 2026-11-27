@@ -7,12 +7,12 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { UploadedAsset } from '../types/assets';
+import { UploadedAsset } from '../../types/assets';
 import {
   extractImageFilesFromDataTransfer,
   filterSupportedImages,
   MAX_UPLOAD_ASSETS,
-} from '../utils/assetFiles';
+} from '../../utils/assetFiles';
 
 interface AssetTrayProps {
   isOpen: boolean;
@@ -42,24 +42,72 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
     onClearAssets,
     onClose,
   }) => {
+    const panelRef = useRef<HTMLElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const folderInputRef = useRef<HTMLInputElement | null>(null);
+    const restoreFocusRafRef = useRef<number | null>(null);
     const [isDragHover, setIsDragHover] = useState(false);
+
+    useEffect(() => {
+      return () => {
+        if (restoreFocusRafRef.current !== null) {
+          cancelAnimationFrame(restoreFocusRafRef.current);
+          restoreFocusRafRef.current = null;
+        }
+      };
+    }, []);
+
+    const closeAndRestoreFocus = useCallback(() => {
+      onClose();
+      if (restoreFocusRafRef.current !== null) {
+        cancelAnimationFrame(restoreFocusRafRef.current);
+      }
+      restoreFocusRafRef.current = requestAnimationFrame(() => {
+        restoreFocusRafRef.current = null;
+        const trigger = document.querySelector<HTMLButtonElement>(
+          '[data-asset-tray-trigger="true"]'
+        );
+        trigger?.focus();
+      });
+    }, [onClose]);
 
     useEffect(() => {
       if (!isOpen) {
         setIsDragHover(false);
         return;
       }
+
+      const rafId = requestAnimationFrame(() => {
+        panelRef.current?.focus();
+      });
+
       const handleKeyDown = (event: KeyboardEvent) => {
         if (event.key === 'Escape') {
           event.preventDefault();
-          onClose();
+          event.stopPropagation();
+          closeAndRestoreFocus();
         }
       };
+
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target as Node | null;
+        if (!target) return;
+        if (panelRef.current && !panelRef.current.contains(target)) {
+          const trigger = (target as Element).closest?.('[data-asset-tray-trigger="true"]');
+          if (!trigger) {
+            onClose();
+          }
+        }
+      };
+
       window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, onClose]);
+      document.addEventListener('pointerdown', handlePointerDown);
+      return () => {
+        cancelAnimationFrame(rafId);
+        window.removeEventListener('keydown', handleKeyDown);
+        document.removeEventListener('pointerdown', handlePointerDown);
+      };
+    }, [isOpen, closeAndRestoreFocus, onClose]);
 
     const handleFileChange = useCallback(
       (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,7 +122,7 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
     );
 
     const handleDrop = useCallback(
-      async (event: React.DragEvent<HTMLDivElement>) => {
+      async (event: React.DragEvent<HTMLElement>) => {
         event.preventDefault();
         event.stopPropagation();
         setIsDragHover(false);
@@ -91,30 +139,36 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
     const targetFrame = selectedFrameIndex ?? 1;
 
     const surfaceClasses = isLightSurface
-      ? 'bg-white/94 border-black/12 text-neutral-900 shadow-[0_20px_56px_rgba(0,0,0,0.16)]'
-      : 'bg-neutral-950/94 border-white/14 text-neutral-100 shadow-[0_24px_64px_rgba(0,0,0,0.68)]';
+      ? 'bg-white/95 border-black/14 text-neutral-950 shadow-[0_20px_56px_rgba(0,0,0,0.16)]'
+      : 'bg-neutral-950/95 border-white/14 text-neutral-100 shadow-[0_24px_64px_rgba(0,0,0,0.68)]';
 
     const subtleBtn = isLightSurface
-      ? 'bg-black/5 hover:bg-black/10 text-neutral-800 border-black/8'
-      : 'bg-white/7 hover:bg-white/14 text-neutral-200 border-white/10';
+      ? 'bg-black/5 hover:bg-black/10 text-neutral-900 border-black/10'
+      : 'bg-white/8 hover:bg-white/14 text-neutral-100 border-white/12';
 
     const ghostBtn = isLightSurface
-      ? 'text-neutral-500 hover:text-neutral-900 hover:bg-black/6'
-      : 'text-neutral-400 hover:text-white hover:bg-white/10';
+      ? 'text-neutral-600 hover:text-neutral-950 hover:bg-black/7'
+      : 'text-neutral-300 hover:text-white hover:bg-white/11';
 
     const dropzoneClasses = isDragHover
       ? isLightSurface
         ? 'border-neutral-900 bg-black/5'
         : 'border-white bg-white/10'
       : isLightSurface
-        ? 'border-black/14 bg-black/[0.02]'
-        : 'border-white/14 bg-white/[0.02]';
+        ? 'border-black/18 bg-black/[0.02]'
+        : 'border-white/16 bg-white/[0.02]';
 
     return (
       <section
+        id="studio-asset-tray"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="false"
         aria-label="Uploaded mockup assets"
+        tabIndex={-1}
         style={{
-          bottom: 'max(88px, calc(36px + var(--studio-dock-height, 64px)))',
+          bottom:
+            'max(calc(88px + env(safe-area-inset-bottom, 0px)), calc(var(--studio-dock-top-offset, 84px) + 16px))',
         }}
         onDragOver={(event) => {
           event.preventDefault();
@@ -128,7 +182,9 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
           }
         }}
         onDrop={handleDrop}
-        className={`fixed left-1/2 -translate-x-1/2 z-40 w-[min(94vw,680px)] rounded-2xl border backdrop-blur-2xl p-3.5 transition-colors ${surfaceClasses}`}
+        className={`fixed left-1/2 -translate-x-1/2 z-[55] w-[min(94vw,680px)] max-h-[min(60dvh,var(--studio-dock-available-above,360px))] overflow-y-auto overscroll-contain rounded-2xl border backdrop-blur-2xl p-3.5 transition-colors focus:outline-none ${
+          isLightSurface ? 'm3-scrollbar-light' : 'm3-scrollbar-dark'
+        } ${surfaceClasses}`}
       >
         <input
           ref={fileInputRef}
@@ -156,8 +212,8 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xs font-semibold tracking-tight">Screen Assets</span>
             <span
-              className={`font-mono-tabular text-[11px] px-1.5 py-0.5 rounded-md ${
-                isLightSurface ? 'bg-black/6 text-neutral-600' : 'bg-white/10 text-neutral-300'
+              className={`font-mono-tabular tabular-nums text-[11px] font-medium px-1.5 py-0.5 rounded-md ${
+                isLightSurface ? 'bg-black/7 text-neutral-700' : 'bg-white/10 text-neutral-200'
               }`}
             >
               {assets.length}/{MAX_UPLOAD_ASSETS}
@@ -168,18 +224,18 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${subtleBtn}`}
+              className={`inline-flex items-center justify-center gap-1.5 min-h-[44px] h-11 px-3.5 rounded-full border text-xs font-medium transition-colors studio-focus-ring ${subtleBtn}`}
             >
-              <ImagePlus className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <ImagePlus className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>Upload</span>
             </button>
 
             <button
               type="button"
               onClick={() => folderInputRef.current?.click()}
-              className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${subtleBtn}`}
+              className={`inline-flex items-center justify-center gap-1.5 min-h-[44px] h-11 px-3.5 rounded-full border text-xs font-medium transition-colors studio-focus-ring ${subtleBtn}`}
             >
-              <FolderUp className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <FolderUp className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>Folder</span>
             </button>
 
@@ -189,10 +245,10 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
                   type="button"
                   onClick={onAutoFillFrames}
                   title={`Distribute assets across ${visibleFrameCount} visible frame${visibleFrameCount === 1 ? '' : 's'}`}
-                  className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${subtleBtn}`}
+                  className={`inline-flex items-center justify-center gap-1.5 min-h-[44px] h-11 px-3.5 rounded-full border text-xs font-medium transition-colors studio-focus-ring ${subtleBtn}`}
                 >
-                  <Layers className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  <span>Fill {visibleFrameCount}</span>
+                  <Layers className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="tabular-nums">Fill {visibleFrameCount}</span>
                 </button>
 
                 <button
@@ -200,20 +256,20 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
                   onClick={onClearAssets}
                   aria-label="Clear all uploaded assets"
                   title="Clear all uploaded assets"
-                  className={`inline-flex items-center justify-center w-8 h-8 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${ghostBtn}`}
+                  className={`inline-flex items-center justify-center min-w-[44px] min-h-[44px] w-11 h-11 rounded-full transition-colors studio-focus-ring ${ghostBtn}`}
                 >
-                  <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <Trash2 className="w-4 h-4 shrink-0" aria-hidden="true" />
                 </button>
               </>
             )}
 
             <button
               type="button"
-              onClick={onClose}
+              onClick={closeAndRestoreFocus}
               aria-label="Close assets panel"
-              className={`inline-flex items-center justify-center w-8 h-8 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${ghostBtn}`}
+              className={`inline-flex items-center justify-center min-w-[44px] min-h-[44px] w-11 h-11 rounded-full transition-colors studio-focus-ring ${ghostBtn}`}
             >
-              <X className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <X className="w-4 h-4 shrink-0" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -222,15 +278,15 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className={`w-full rounded-xl border border-dashed px-4 py-6 flex flex-col items-center justify-center gap-1.5 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${dropzoneClasses}`}
+            className={`w-full min-h-[104px] rounded-xl border border-dashed px-4 py-6 flex flex-col items-center justify-center gap-1.5 text-center transition-colors studio-focus-ring ${dropzoneClasses}`}
           >
-            <Upload className="w-4 h-4 opacity-70" aria-hidden="true" />
+            <Upload className="w-4 h-4 shrink-0 opacity-75" aria-hidden="true" />
             <span className="text-xs font-medium">
               Drop screenshots or click to upload
             </span>
             <span
               className={`text-[11px] ${
-                isLightSurface ? 'text-neutral-500' : 'text-neutral-400'
+                isLightSurface ? 'text-neutral-600' : 'text-neutral-400'
               }`}
             >
               PNG, JPG, WebP, or GIF — drag any thumbnail directly onto a frame
@@ -253,15 +309,17 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
                     type="button"
                     onClick={() => onAssignAssetToFrame(asset, targetFrame)}
                     title={`Click to place "${asset.name}" in Frame ${targetFrame}, or drag onto any frame`}
-                    className={`w-[64px] h-[112px] rounded-xl overflow-hidden border transition-transform duration-150 hover:scale-[1.03] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-current/45 ${
+                    className={`w-[64px] h-[112px] rounded-xl overflow-hidden border transition-transform duration-150 hover:scale-[1.03] active:scale-[0.98] studio-focus-ring ${
                       isLightSurface
-                        ? 'border-black/12 bg-neutral-100'
+                        ? 'border-black/14 bg-neutral-100'
                         : 'border-white/14 bg-neutral-900'
                     }`}
                   >
                     <img
                       src={asset.objectUrl}
                       alt={asset.name}
+                      width={64}
+                      height={112}
                       loading="lazy"
                       decoding="async"
                       draggable={false}
@@ -273,14 +331,14 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
                     type="button"
                     onClick={() => onRemoveAsset(asset.id)}
                     aria-label={`Remove ${asset.name}`}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-neutral-900/90 text-white border border-white/20 inline-flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                    className="absolute -top-1.5 -right-1.5 w-6 h-6 before:content-[''] before:absolute before:-inset-2.5 rounded-full bg-neutral-900/95 text-white border border-white/25 inline-flex items-center justify-center opacity-0 [@media(hover:none)]:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity studio-focus-ring"
                   >
-                    <X className="w-3 h-3" aria-hidden="true" />
+                    <X className="w-3 h-3 shrink-0" aria-hidden="true" />
                   </button>
 
                   <p
                     className={`mt-1 text-[10px] truncate text-center ${
-                      isLightSurface ? 'text-neutral-600' : 'text-neutral-400'
+                      isLightSurface ? 'text-neutral-700' : 'text-neutral-300'
                     }`}
                     title={asset.name}
                   >
@@ -292,11 +350,11 @@ export const AssetTray: React.FC<AssetTrayProps> = React.memo(
 
             <p
               className={`text-[11px] ${
-                isLightSurface ? 'text-neutral-500' : 'text-neutral-400'
+                isLightSurface ? 'text-neutral-600' : 'text-neutral-400'
               }`}
             >
               Drag any screenshot onto a mockup frame, or click a thumbnail to place it in Frame{' '}
-              <span className="font-mono-tabular font-semibold">{targetFrame}</span>.
+              <span className="font-mono-tabular tabular-nums font-semibold">{targetFrame}</span>.
             </p>
           </div>
         )}

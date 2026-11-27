@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kiosk-mockup-generator.micahsamter.com/sitemap.xml

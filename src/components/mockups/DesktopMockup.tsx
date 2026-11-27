@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   ExternalLink,
   ImagePlus,
@@ -8,15 +8,16 @@ import {
   RotateCw,
   X,
 } from 'lucide-react';
-import { FrameOverride } from '../types/assets';
+import { useFrameDropZone } from '../../hooks/useFrameDropZone';
+import { useIframeStatus } from '../../hooks/useIframeStatus';
+import { FrameOverride } from '../../types/assets';
 import {
   BEZEL_FINISHES,
   BezelFinishId,
   getAdaptiveDeviceShadow,
   TERMINAL_SCENE_LAYOUTS,
   TerminalSceneId,
-} from '../types/studio';
-import { extractImageFilesFromDataTransfer } from '../utils/assetFiles';
+} from '../../types/studio';
 
 interface DesktopMockupProps {
   formFactor: TerminalSceneId;
@@ -99,8 +100,6 @@ const DESKTOP_METAL_PALETTES: Record<BezelFinishId, DesktopMetalPalette> = {
   },
 };
 
-const IFRAME_LOAD_TIMEOUT_MS = 8500;
-
 function formatDisplayAddress(customUrl: string | null, override?: FrameOverride): string {
   if (override) return override.name;
   if (!customUrl) return 'studio.local';
@@ -132,12 +131,6 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
     onClearOverride,
     onOpenAssetTray,
   }) => {
-    const [isDragOver, setIsDragOver] = useState(false);
-    const [iframeLoading, setIframeLoading] = useState(false);
-    const [iframeBlocked, setIframeBlocked] = useState(false);
-    const [localReload, setLocalReload] = useState(0);
-    const loadTimeoutRef = useRef<number | null>(null);
-
     const spec = TERMINAL_SCENE_LAYOUTS[formFactor];
     const finish = BEZEL_FINISHES[bezelFinish];
     const metal = DESKTOP_METAL_PALETTES[bezelFinish];
@@ -161,79 +154,21 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
     }, [backgroundTone, suppressShadow]);
 
     const effectiveIframeSrc = !override && customUrl ? customUrl : null;
+    const {
+      iframeLoading,
+      iframeBlocked,
+      localReload,
+      handleIframeLoad,
+      handleIframeError,
+      triggerLocalReload,
+    } = useIframeStatus(effectiveIframeSrc, reloadNonce);
     const iframeKey = `${formFactor}-${effectiveIframeSrc ?? 'none'}-${reloadNonce}-${localReload}`;
 
-    useEffect(() => {
-      if (loadTimeoutRef.current !== null) {
-        window.clearTimeout(loadTimeoutRef.current);
-        loadTimeoutRef.current = null;
-      }
-
-      if (!effectiveIframeSrc) {
-        setIframeLoading(false);
-        setIframeBlocked(false);
-        return;
-      }
-
-      setIframeLoading(true);
-      setIframeBlocked(false);
-
-      loadTimeoutRef.current = window.setTimeout(() => {
-        loadTimeoutRef.current = null;
-        setIframeLoading(false);
-        setIframeBlocked(true);
-      }, IFRAME_LOAD_TIMEOUT_MS);
-
-      return () => {
-        if (loadTimeoutRef.current !== null) {
-          window.clearTimeout(loadTimeoutRef.current);
-          loadTimeoutRef.current = null;
-        }
-      };
-    }, [effectiveIframeSrc, reloadNonce, localReload]);
-
-    const handleIframeLoad = useCallback(() => {
-      if (loadTimeoutRef.current !== null) {
-        window.clearTimeout(loadTimeoutRef.current);
-        loadTimeoutRef.current = null;
-      }
-      setIframeLoading(false);
-      setIframeBlocked(false);
-    }, []);
-
-    const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = 'copy';
-      setIsDragOver(true);
-    }, []);
-
-    const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-      event.stopPropagation();
-      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-        setIsDragOver(false);
-      }
-    }, []);
-
-    const handleDrop = useCallback(
-      async (event: React.DragEvent<HTMLDivElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragOver(false);
-
-        const assetId = event.dataTransfer.getData('application/x-studio-asset-id');
-        if (assetId) {
-          onAssignAssetId(frameIndex, assetId);
-          return;
-        }
-
-        const { files, rejectedCount } = await extractImageFilesFromDataTransfer(event.dataTransfer);
-        if (files.length > 0 || rejectedCount > 0) {
-          onDropFilesOnFrame(frameIndex, files, rejectedCount);
-        }
-      },
-      [frameIndex, onAssignAssetId, onDropFilesOnFrame]
-    );
+    const { isDragOver, handleDragOver, handleDragLeave, handleDrop } = useFrameDropZone({
+      frameIndex,
+      onAssignAssetId,
+      onDropFilesOnFrame,
+    });
 
     const screenRadiusClass = !showBezel
       ? 'rounded-[20px]'
@@ -269,7 +204,11 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
             />
 
             {!isCapturing && (
-              <div className="absolute top-5 right-5 z-20 flex items-center gap-2 opacity-0 group-hover/desktop:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+              <div
+                className={`absolute top-5 right-5 z-20 flex items-center gap-2 opacity-0 group-hover/desktop:opacity-100 focus-within:opacity-100 transition-opacity duration-150 ${
+                  isSelected ? '[@media(hover:none)]:opacity-100' : ''
+                }`}
+              >
                 <button
                   type="button"
                   onClick={(event) => {
@@ -282,7 +221,7 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
                       : 'Switch image to fill display'
                   }
                   title={override.fit === 'cover' ? 'Fit entire image' : 'Fill screen'}
-                  className="w-10 h-10 rounded-xl bg-black/75 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/90 transition-colors"
+                  className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-black/75 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/90 transition-colors studio-focus-ring"
                 >
                   {override.fit === 'cover' ? (
                     <Minimize2 className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -298,7 +237,7 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
                   }}
                   aria-label="Clear desktop display"
                   title="Clear display"
-                  className="w-10 h-10 rounded-xl bg-black/75 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/90 transition-colors"
+                  className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-black/75 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/90 transition-colors studio-focus-ring"
                 >
                   <X className="w-4 h-4 shrink-0" aria-hidden="true" />
                 </button>
@@ -314,6 +253,8 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
               width={spec.screenWidth}
               height={spec.screenHeight}
               onLoad={handleIframeLoad}
+              onError={handleIframeError}
+              referrerPolicy="no-referrer"
               style={{
                 width: `${spec.screenWidth}px`,
                 height: `${spec.screenHeight}px`,
@@ -325,7 +266,7 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
 
             {!isCapturing && iframeLoading && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0a0a0c]/88 backdrop-blur-sm text-neutral-300">
-                <Loader2 className="w-6 h-6 animate-spin text-neutral-400" aria-hidden="true" />
+                <Loader2 className="w-6 h-6 shrink-0 animate-spin text-neutral-400" aria-hidden="true" />
                 <span className="text-sm font-medium">Loading desktop preview…</span>
               </div>
             )}
@@ -335,7 +276,7 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
                 <p className="text-base font-semibold text-white">
                   Preview may be blocked by this site
                 </p>
-                <p className="text-sm leading-relaxed text-neutral-400 max-w-md">
+                <p className="text-sm leading-relaxed text-neutral-300 max-w-md">
                   Some websites restrict embedding inside frames. You can retry or open the site directly.
                 </p>
                 <div className="flex items-center gap-2.5 pt-1">
@@ -343,11 +284,11 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      setLocalReload((prev) => prev + 1);
+                      triggerLocalReload();
                     }}
-                    className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-white/10 hover:bg-white/16 border border-white/12 text-xs font-medium text-white transition-colors"
+                    className="inline-flex items-center gap-1.5 min-h-[44px] h-11 px-4 rounded-full bg-white/10 hover:bg-white/16 border border-white/14 text-xs font-medium text-white transition-colors studio-focus-ring"
                   >
-                    <RotateCw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <RotateCw className="w-4 h-4 shrink-0" aria-hidden="true" />
                     <span>Retry</span>
                   </button>
                   <a
@@ -355,9 +296,9 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(event) => event.stopPropagation()}
-                    className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-white text-neutral-950 hover:bg-neutral-200 text-xs font-semibold transition-colors"
+                    className="inline-flex items-center gap-1.5 min-h-[44px] h-11 px-4 rounded-full bg-white text-neutral-950 hover:bg-neutral-200 text-xs font-semibold transition-colors studio-focus-ring"
                   >
-                    <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <ExternalLink className="w-4 h-4 shrink-0" aria-hidden="true" />
                     <span>Open tab</span>
                   </a>
                 </div>
@@ -374,7 +315,7 @@ export const DesktopMockup: React.FC<DesktopMockupProps> = React.memo(
                   onSelectFrame(frameIndex);
                   onOpenAssetTray();
                 }}
-                className="group/empty flex flex-col items-center gap-4 px-9 py-7 rounded-2xl border border-dashed border-white/14 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/26 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+                className="group/empty flex flex-col items-center gap-4 px-9 py-7 rounded-2xl border border-dashed border-white/14 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/26 transition-colors studio-focus-ring"
               >
                 <span className="w-12 h-12 rounded-xl bg-white/[0.06] border border-white/10 inline-flex items-center justify-center text-neutral-300 group-hover/empty:text-white transition-colors">
                   <ImagePlus className="w-5 h-5" aria-hidden="true" />

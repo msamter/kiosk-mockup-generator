@@ -1,0 +1,280 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    color-scheme: dark;
+    --app-viewport-top: 0px;
+    --app-viewport-height: 100dvh;
+    --app-viewport-bottom-offset: 0px;
+    --studio-dock-height: 64px;
+    --studio-dock-top-offset: 84px;
+    --studio-dock-available-above: 320px;
+  }
+
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow-x: clip;
+    overscroll-behavior: none;
+  }
+
+  html,
+  body {
+    background-color: #0b0b0b;
+  }
+
+  #root {
+    background-color: transparent;
+  }
+
+  button,
+  a,
+  select,
+  input[type='range'] {
+    touch-action: manipulation;
+  }
+}
+
+@media (min-width: 640px) {
+  .studio-stage-clearance {
+    padding-top: 64px;
+    padding-bottom: calc(var(--studio-dock-top-offset, 128px) + 20px);
+  }
+}
+
+@media (min-width: 1280px) {
+  .studio-stage-clearance {
+    padding-top: 56px;
+    padding-bottom: calc(var(--studio-dock-top-offset, 88px) + 16px);
+  }
+}
+
+/* Strictly neutral studio transparency grid */
+.studio-checkerboard {
+  background-color: #efefef;
+  background-image:
+    linear-gradient(45deg, #dfdfdf 25%, transparent 25%),
+    linear-gradient(-45deg, #dfdfdf 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dfdfdf 75%),
+    linear-gradient(-45deg, transparent 75%, #dfdfdf 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+/* GPU-composited stage scaling driven by CSS custom properties (zero React re-renders during slider drag) */
+.studio-stage-scaler {
+  transform: scale(calc(var(--stage-fit-scale, 1) * var(--stage-user-scale, 1)));
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.studio-stage-scaler[data-scaling='true'] {
+  transition: none;
+}
+
+/* Material 3 Expressive motion tokens & spring physics */
+.m3-spring {
+  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes m3-menu-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes m3-dock-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.m3-menu-enter {
+  animation: m3-menu-enter 260ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.m3-dock-enter {
+  animation: m3-dock-enter 280ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+/* Material 3 Expressive Slider: native range acts as full-accessibility hit layer over custom expressive track & vertical bar handle */
+.studio-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+
+.studio-slider:disabled {
+  cursor: not-allowed;
+}
+
+.studio-slider::-webkit-slider-runnable-track {
+  height: 44px;
+  background: transparent;
+}
+
+.studio-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 44px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.studio-slider::-moz-range-track {
+  height: 44px;
+  background: transparent;
+  border: none;
+}
+
+.studio-slider::-moz-range-thumb {
+  width: 24px;
+  height: 44px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.font-mono-tabular {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Distinct keyboard focus-visible ring clearly separated from black/white active/selected states */
+.studio-focus-ring:focus {
+  outline: none;
+}
+
+.studio-focus-ring:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Action tooltips: always visible on keyboard focus-visible, hover-only on fine pointers to prevent touch stickiness on tablets */
+.studio-action-tooltip {
+  opacity: 0;
+  transform: translateY(4px) scale(0.95);
+}
+
+.group\/action:focus-visible .studio-action-tooltip {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .group\/action:hover .studio-action-tooltip {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Google 2026 Material 3 Expressive pill scrollbar for scrollable surfaces */
+.m3-scrollbar-light,
+.m3-scrollbar-dark {
+  scrollbar-width: thin;
+}
+
+.m3-scrollbar-light {
+  scrollbar-color: rgba(23, 23, 27, 0.28) transparent;
+}
+
+.m3-scrollbar-dark {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.m3-scrollbar-light::-webkit-scrollbar,
+.m3-scrollbar-dark::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.m3-scrollbar-light::-webkit-scrollbar-track,
+.m3-scrollbar-dark::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: 12px;
+}
+
+.m3-scrollbar-light::-webkit-scrollbar-thumb {
+  background-color: rgba(23, 23, 27, 0.26);
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-clip: content-box;
+}
+
+.m3-scrollbar-light::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(23, 23, 27, 0.48);
+  border-width: 2px;
+}
+
+.m3-scrollbar-light::-webkit-scrollbar-thumb:active {
+  background-color: rgba(23, 23, 27, 0.68);
+  border-width: 2px;
+}
+
+.m3-scrollbar-dark::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.26);
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-clip: content-box;
+}
+
+.m3-scrollbar-dark::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.48);
+  border-width: 2px;
+}
+
+.m3-scrollbar-dark::-webkit-scrollbar-thumb:active {
+  background-color: rgba(255, 255, 255, 0.68);
+  border-width: 2px;
+}
+
+/* Hide mouse cursor completely across all elements while taking a clean screenshot */
+.studio-hide-cursor,
+.studio-hide-cursor *,
+.studio-hide-cursor iframe {
+  cursor: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

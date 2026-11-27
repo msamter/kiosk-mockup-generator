@@ -9,33 +9,28 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
-      // Copies src/assets into dist/ so root-relative URLs like
-      // "/src/assets/images/..." (e.g. generate_image output) still resolve
-      // in production builds, while excluding any aistudio chat attachment folders.
+      // Ensure Vite never publishes any private aistudio chat attachment directory into dist/
       {
-        name: 'copy-unbundled-src-assets',
+        name: 'exclude-aistudio-from-dist',
         apply: 'build',
         closeBundle(error?: Error): void {
           if (error) {
             return;
           }
           const distDir = path.resolve(__dirname, 'dist');
-          const srcAssets = path.resolve(__dirname, 'src/assets');
-          const distAssets = path.resolve(distDir, 'src/assets');
-          if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
-            fs.cpSync(srcAssets, distAssets, {
-              recursive: true,
-              force: true,
-              filter: (src) => !src.split(path.sep).includes('aistudio'),
-            });
-          }
-          // Ensure Vite's public/ copy never publishes aistudio chat attachments into dist/
-          for (const relativePath of ['aistudio', 'assets/aistudio', 'src/assets/aistudio']) {
-            const target = path.resolve(distDir, relativePath);
-            if (fs.existsSync(target)) {
-              fs.rmSync(target, {recursive: true, force: true});
+          const removeNestedAistudioDirs = (dir: string): void => {
+            if (!fs.existsSync(dir)) return;
+            for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+              if (!entry.isDirectory()) continue;
+              const fullPath = path.join(dir, entry.name);
+              if (entry.name.toLowerCase() === 'aistudio') {
+                fs.rmSync(fullPath, {recursive: true, force: true});
+              } else {
+                removeNestedAistudioDirs(fullPath);
+              }
             }
-          }
+          };
+          removeNestedAistudioDirs(distDir);
         },
       },
     ],

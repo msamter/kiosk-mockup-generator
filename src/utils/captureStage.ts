@@ -215,6 +215,9 @@ function frameCanvasToAspectRatio(
 ): HTMLCanvasElement {
   const srcW = sourceCanvas.width;
   const srcH = sourceCanvas.height;
+  if (srcW <= 0 || srcH <= 0 || !Number.isFinite(srcW) || !Number.isFinite(srcH)) {
+    return sourceCanvas;
+  }
   const targetRatio = 16 / 9;
   const srcRatio = srcW / srcH;
 
@@ -322,6 +325,8 @@ export async function captureCleanShowcase({
 
   let stream: MediaStream | null = null;
   let videoEl: HTMLVideoElement | null = null;
+  let rawCanvas: HTMLCanvasElement | null = null;
+  let finalCanvas: HTMLCanvasElement | null = null;
   let chromeHidden = false;
 
   const safeRestore = () => {
@@ -329,6 +334,31 @@ export async function captureCleanShowcase({
       chromeHidden = false;
       onRestoreChrome();
     }
+  };
+
+  const releaseMedia = () => {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      stream = null;
+    }
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.srcObject = null;
+      videoEl = null;
+    }
+  };
+
+  const releaseCanvases = () => {
+    if (finalCanvas && finalCanvas !== rawCanvas) {
+      finalCanvas.width = 0;
+      finalCanvas.height = 0;
+    }
+    if (rawCanvas) {
+      rawCanvas.width = 0;
+      rawCanvas.height = 0;
+    }
+    finalCanvas = null;
+    rawCanvas = null;
   };
 
   try {
@@ -404,7 +434,7 @@ export async function captureCleanShowcase({
       throw new Error('Captured frame returned empty dimensions.');
     }
 
-    const rawCanvas = document.createElement('canvas');
+    rawCanvas = document.createElement('canvas');
     rawCanvas.width = width;
     rawCanvas.height = height;
 
@@ -415,22 +445,14 @@ export async function captureCleanShowcase({
 
     ctx.drawImage(videoEl, 0, 0, width, height);
 
-    stream.getTracks().forEach((track) => track.stop());
-    stream = null;
-
-    if (videoEl) {
-      videoEl.pause();
-      videoEl.srcObject = null;
-      videoEl = null;
-    }
-
+    releaseMedia();
     safeRestore();
 
     if (transparentBackground) {
       applyExteriorTransparentKey(ctx, width, height);
     }
 
-    const finalCanvas = frameCanvasToAspectRatio(
+    finalCanvas = frameCanvasToAspectRatio(
       rawCanvas,
       transparentBackground,
       backdropEdgeColor,
@@ -442,24 +464,8 @@ export async function captureCleanShowcase({
 
     await exportCanvasAsPng(finalCanvas, filename);
 
-    if (finalCanvas !== rawCanvas) {
-      finalCanvas.width = 0;
-      finalCanvas.height = 0;
-    }
-    rawCanvas.width = 0;
-    rawCanvas.height = 0;
-
     return { status: 'saved', filename, aspectRatio };
   } catch (err: unknown) {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-    }
-    if (videoEl) {
-      videoEl.pause();
-      videoEl.srcObject = null;
-    }
-    safeRestore();
-
     if (err instanceof DOMException) {
       if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
         return { status: 'cancelled' };
@@ -477,5 +483,9 @@ export async function captureCleanShowcase({
       status: 'error',
       reason: 'Could not capture the screen. Please try again or use your OS screenshot tool.',
     };
+  } finally {
+    releaseMedia();
+    releaseCanvases();
+    safeRestore();
   }
 }

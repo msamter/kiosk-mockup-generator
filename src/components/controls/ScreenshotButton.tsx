@@ -71,13 +71,19 @@ export const ScreenshotButton: React.FC<ScreenshotButtonProps> = React.memo(
     if (isCapturing) return null;
 
     const surfaceClasses = isLightSurface
-      ? 'bg-white/90 text-neutral-900 border-black/12 hover:bg-white shadow-[0_14px_40px_rgba(0,0,0,0.14)] focus-visible:ring-neutral-900/35'
-      : 'bg-neutral-950/88 text-neutral-100 border-white/14 hover:bg-neutral-900/95 shadow-[0_18px_48px_rgba(0,0,0,0.62)] focus-visible:ring-white/45';
+      ? 'bg-white/94 text-neutral-950 border-black/14 hover:bg-white shadow-[0_14px_40px_rgba(0,0,0,0.14)]'
+      : 'bg-neutral-950/90 text-neutral-100 border-white/14 hover:bg-neutral-900/95 shadow-[0_18px_48px_rgba(0,0,0,0.62)]';
 
-    const buttonClasses = `inline-flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-full border backdrop-blur-2xl transition-[background-color,transform,opacity] duration-150 active:scale-[0.98] focus:outline-none focus-visible:ring-2 ${surfaceClasses}`;
+    const buttonClasses = `inline-flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-full border backdrop-blur-2xl transition-[background-color,transform,opacity] duration-150 active:scale-[0.98] studio-focus-ring ${surfaceClasses}`;
 
     return (
-      <div className="fixed top-5 right-5 z-50 flex items-center gap-2">
+      <div
+        style={{
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + var(--app-viewport-top, 0px))',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
+        }}
+        className="fixed top-3 right-3 sm:top-5 sm:right-5 z-50 flex items-center gap-2"
+      >
         <button
           type="button"
           onClick={() => void handleToggleFullscreen()}

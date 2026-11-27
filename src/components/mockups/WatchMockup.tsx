@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   ExternalLink,
   ImagePlus,
@@ -8,13 +8,14 @@ import {
   RotateCw,
   X,
 } from 'lucide-react';
-import { FrameOverride } from '../types/assets';
+import { useFrameDropZone } from '../../hooks/useFrameDropZone';
+import { useIframeStatus } from '../../hooks/useIframeStatus';
+import { FrameOverride } from '../../types/assets';
 import {
   BEZEL_FINISHES,
   BezelFinishId,
   getAdaptiveDeviceShadow,
-} from '../types/studio';
-import { extractImageFilesFromDataTransfer } from '../utils/assetFiles';
+} from '../../types/studio';
 
 interface WatchMockupProps {
   frameIndex: number;
@@ -87,8 +88,6 @@ const WATCH_HARDWARE_PALETTES: Record<BezelFinishId, WatchHardwarePalette> = {
   },
 };
 
-const IFRAME_LOAD_TIMEOUT_MS = 8500;
-
 export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
   ({
     frameIndex,
@@ -112,12 +111,6 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
     onClearOverride,
     onOpenAssetTray,
   }) => {
-    const [isDragOver, setIsDragOver] = useState(false);
-    const [iframeLoading, setIframeLoading] = useState(false);
-    const [iframeBlocked, setIframeBlocked] = useState(false);
-    const [localReload, setLocalReload] = useState(0);
-    const loadTimeoutRef = useRef<number | null>(null);
-
     const finish = BEZEL_FINISHES[bezelFinish];
     const hardware = WATCH_HARDWARE_PALETTES[bezelFinish];
     const suppressShadow = isTransparentBackdrop && isCapturing;
@@ -134,79 +127,21 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
     );
 
     const effectiveIframeSrc = !override && customUrl ? customUrl : null;
+    const {
+      iframeLoading,
+      iframeBlocked,
+      localReload,
+      handleIframeLoad,
+      handleIframeError,
+      triggerLocalReload,
+    } = useIframeStatus(effectiveIframeSrc, reloadNonce);
     const iframeKey = `watch-${frameIndex}-${screenDiameterPx}-${effectiveIframeSrc ?? 'none'}-${reloadNonce}-${localReload}`;
 
-    useEffect(() => {
-      if (loadTimeoutRef.current !== null) {
-        window.clearTimeout(loadTimeoutRef.current);
-        loadTimeoutRef.current = null;
-      }
-
-      if (!effectiveIframeSrc) {
-        setIframeLoading(false);
-        setIframeBlocked(false);
-        return;
-      }
-
-      setIframeLoading(true);
-      setIframeBlocked(false);
-
-      loadTimeoutRef.current = window.setTimeout(() => {
-        loadTimeoutRef.current = null;
-        setIframeLoading(false);
-        setIframeBlocked(true);
-      }, IFRAME_LOAD_TIMEOUT_MS);
-
-      return () => {
-        if (loadTimeoutRef.current !== null) {
-          window.clearTimeout(loadTimeoutRef.current);
-          loadTimeoutRef.current = null;
-        }
-      };
-    }, [effectiveIframeSrc, reloadNonce, localReload]);
-
-    const handleIframeLoad = useCallback(() => {
-      if (loadTimeoutRef.current !== null) {
-        window.clearTimeout(loadTimeoutRef.current);
-        loadTimeoutRef.current = null;
-      }
-      setIframeLoading(false);
-      setIframeBlocked(false);
-    }, []);
-
-    const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = 'copy';
-      setIsDragOver(true);
-    }, []);
-
-    const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-      event.stopPropagation();
-      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-        setIsDragOver(false);
-      }
-    }, []);
-
-    const handleDrop = useCallback(
-      async (event: React.DragEvent<HTMLDivElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragOver(false);
-
-        const assetId = event.dataTransfer.getData('application/x-studio-asset-id');
-        if (assetId) {
-          onAssignAssetId(frameIndex, assetId);
-          return;
-        }
-
-        const { files, rejectedCount } = await extractImageFilesFromDataTransfer(event.dataTransfer);
-        if (files.length > 0 || rejectedCount > 0) {
-          onDropFilesOnFrame(frameIndex, files, rejectedCount);
-        }
-      },
-      [frameIndex, onAssignAssetId, onDropFilesOnFrame]
-    );
+    const { isDragOver, handleDragOver, handleDragLeave, handleDrop } = useFrameDropZone({
+      frameIndex,
+      onAssignAssetId,
+      onDropFilesOnFrame,
+    });
 
     const screenContent = (
       <div
@@ -234,7 +169,11 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
             />
 
             {!isCapturing && (
-              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 opacity-0 group-hover/watch:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+              <div
+                className={`absolute top-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 opacity-0 group-hover/watch:opacity-100 focus-within:opacity-100 transition-opacity duration-150 ${
+                  isSelected ? '[@media(hover:none)]:opacity-100' : ''
+                }`}
+              >
                 <button
                   type="button"
                   onClick={(event) => {
@@ -247,7 +186,7 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
                       : 'Switch image to fill watch'
                   }
                   title={override.fit === 'cover' ? 'Fit entire image' : 'Fill watch face'}
-                  className="w-8 h-8 rounded-full bg-black/78 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/92 transition-colors"
+                  className="relative before:content-[''] before:absolute before:-inset-1.5 w-9 h-9 rounded-full bg-black/78 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/92 transition-colors studio-focus-ring"
                 >
                   {override.fit === 'cover' ? (
                     <Minimize2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -263,7 +202,7 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
                   }}
                   aria-label={`Clear watch frame ${frameIndex}`}
                   title="Clear watch face"
-                  className="w-8 h-8 rounded-full bg-black/78 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/92 transition-colors"
+                  className="relative before:content-[''] before:absolute before:-inset-1.5 w-9 h-9 rounded-full bg-black/78 text-white border border-white/15 backdrop-blur-md inline-flex items-center justify-center hover:bg-black/92 transition-colors studio-focus-ring"
                 >
                   <X className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 </button>
@@ -279,6 +218,8 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
               width={screenDiameterPx}
               height={screenDiameterPx}
               onLoad={handleIframeLoad}
+              onError={handleIframeError}
+              referrerPolicy="no-referrer"
               style={{
                 width: `${screenDiameterPx}px`,
                 height: `${screenDiameterPx}px`,
@@ -290,7 +231,7 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
 
             {!isCapturing && iframeLoading && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#070709]/88 backdrop-blur-sm text-neutral-300">
-                <Loader2 className="w-5 h-5 animate-spin text-neutral-400" aria-hidden="true" />
+                <Loader2 className="w-5 h-5 shrink-0 animate-spin text-neutral-400" aria-hidden="true" />
                 <span className="text-xs font-medium">Loading…</span>
               </div>
             )}
@@ -298,17 +239,17 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
             {!isCapturing && iframeBlocked && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 px-12 text-center bg-[#070709]/94 text-neutral-200">
                 <p className="text-xs font-semibold text-white">Preview blocked</p>
-                <p className="text-[11px] leading-relaxed text-neutral-400">
+                <p className="text-[11px] leading-relaxed text-neutral-300">
                   This site restricts frame embedding.
                 </p>
-                <div className="flex items-center gap-1.5 pt-1">
+                <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      setLocalReload((prev) => prev + 1);
+                      triggerLocalReload();
                     }}
-                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-white/10 hover:bg-white/16 border border-white/12 text-[11px] font-medium text-white transition-colors"
+                    className="relative before:content-[''] before:absolute before:-inset-y-2 before:-inset-x-1 inline-flex items-center gap-1 h-8 px-3 rounded-full bg-white/10 hover:bg-white/16 border border-white/14 text-[11px] font-medium text-white transition-colors studio-focus-ring"
                   >
                     <RotateCw className="w-3 h-3 shrink-0" aria-hidden="true" />
                     <span>Retry</span>
@@ -318,7 +259,7 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(event) => event.stopPropagation()}
-                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-white text-neutral-950 hover:bg-neutral-200 text-[11px] font-semibold transition-colors"
+                    className="relative before:content-[''] before:absolute before:-inset-y-2 before:-inset-x-1 inline-flex items-center gap-1 h-8 px-3 rounded-full bg-white text-neutral-950 hover:bg-neutral-200 text-[11px] font-semibold transition-colors studio-focus-ring"
                   >
                     <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
                     <span>Open</span>
@@ -337,7 +278,7 @@ export const WatchMockup: React.FC<WatchMockupProps> = React.memo(
                   onSelectFrame(frameIndex);
                   onOpenAssetTray();
                 }}
-                className="group/empty flex flex-col items-center gap-2.5 px-6 py-5 rounded-full border border-dashed border-white/12 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/24 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+                className="group/empty flex flex-col items-center gap-2.5 px-6 py-5 rounded-full border border-dashed border-white/12 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/24 transition-colors studio-focus-ring"
               >
                 <span className="w-9 h-9 rounded-full bg-white/[0.06] border border-white/10 inline-flex items-center justify-center text-neutral-300 group-hover/empty:text-white transition-colors">
                   <ImagePlus className="w-4 h-4" aria-hidden="true" />

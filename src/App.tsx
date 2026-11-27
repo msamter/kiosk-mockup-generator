@@ -1,27 +1,34 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
-import { AssetTray } from './components/AssetTray';
-import { ScreenshotButton } from './components/ScreenshotButton';
+import { AssetTray } from './components/controls/AssetTray';
+import { ScreenshotButton } from './components/controls/ScreenshotButton';
 import { StageComposition } from './components/StageComposition';
-import { StudioControls } from './components/StudioControls';
+import { StudioControls } from './components/controls/StudioControls';
+import { StudioErrorBoundary } from './components/StudioErrorBoundary';
 import { StudioToastHost, StudioToastHostHandle } from './components/StudioToastHost';
 import { useStudioShortcuts } from './hooks/useStudioShortcuts';
 import { useViewportScale } from './hooks/useViewportScale';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import { FrameOverride, UploadedAsset } from './types/assets';
 import {
   AngleSceneId,
   BezelFinishId,
   CharismaSceneId,
+  DynamicSceneId,
   getStudioBackgroundStyle,
   getThemeForScene,
   GridSceneId,
   HourglassSceneId,
   isAngleScene,
   isCharismaScene,
+  isDynamicScene,
   isGridScene,
   isHourglassScene,
+  isLiveActionScene,
   isScribeScene,
   isTerminalScene,
+  isWaveScene,
+  LiveActionSceneId,
   SCENE_FRAME_INDICES,
   SCENE_LAYOUT_CLASSES,
   SCENE_STAGE_LABELS,
@@ -31,6 +38,7 @@ import {
   StudioThemeId,
   TerminalSceneId,
   THEME_SCENES,
+  WaveSceneId,
 } from './types/studio';
 import {
   extractImageFilesFromDataTransfer,
@@ -39,9 +47,12 @@ import {
 } from './utils/assetFiles';
 import { captureCleanShowcase } from './utils/captureStage';
 import {
+  DEFAULT_STUDIO_SETTINGS,
+  flushScheduledStudioSettings,
   loadPersistedScalePercent,
   loadStudioSettings,
-  saveStudioSettings,
+  savePersistedScalePercent,
+  scheduleSaveStudioSettings,
 } from './utils/studioStorage';
 
 export function App() {
@@ -57,6 +68,12 @@ export function App() {
   const [lastCharismaScene, setLastCharismaScene] = useState<CharismaSceneId>(() =>
     isCharismaScene(initialSettings.activeScene) ? initialSettings.activeScene : 'duo'
   );
+  const [lastWaveScene, setLastWaveScene] = useState<WaveSceneId>(() =>
+    isWaveScene(initialSettings.activeScene) ? initialSettings.activeScene : 'wave-2'
+  );
+  const [lastDynamicScene, setLastDynamicScene] = useState<DynamicSceneId>(() =>
+    isDynamicScene(initialSettings.activeScene) ? initialSettings.activeScene : 'dynamic-1'
+  );
   const [lastTerminalScene, setLastTerminalScene] = useState<TerminalSceneId>(() =>
     isTerminalScene(initialSettings.activeScene) ? initialSettings.activeScene : 'desktop'
   );
@@ -65,6 +82,9 @@ export function App() {
   );
   const [lastHourglassScene, setLastHourglassScene] = useState<HourglassSceneId>(() =>
     isHourglassScene(initialSettings.activeScene) ? initialSettings.activeScene : 'watch-1'
+  );
+  const [lastLiveActionScene, setLastLiveActionScene] = useState<LiveActionSceneId>(() =>
+    isLiveActionScene(initialSettings.activeScene) ? initialSettings.activeScene : 'live-grip'
   );
   const [backgroundTone, setBackgroundTone] = useState<number>(initialSettings.backgroundTone);
   const [isTransparentBackdrop, setIsTransparentBackdrop] = useState<boolean>(
@@ -78,6 +98,7 @@ export function App() {
   const [frameOverrides, setFrameOverrides] = useState<Record<number, FrameOverride>>({});
   const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(1);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [scaleResetNonce, setScaleResetNonce] = useState(0);
 
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [assetTrayOpen, setAssetTrayOpen] = useState(false);
@@ -87,14 +108,18 @@ export function App() {
   const [isCaptureBusy, setIsCaptureBusy] = useState(false);
   const [isWindowDragOver, setIsWindowDragOver] = useState(false);
 
+  const stageViewportRef = useRef<HTMLElement | null>(null);
   const stageContentRef = useRef<HTMLDivElement | null>(null);
   const toastRef = useRef<StudioToastHostHandle | null>(null);
   const assetsRef = useRef<UploadedAsset[]>([]);
   const activeObjectUrlsRef = useRef<Set<string>>(new Set());
   const isMountedRef = useRef(true);
   const dragDepthRef = useRef(0);
+  const captureInFlightRef = useRef(false);
 
   assetsRef.current = assets;
+
+  useVisualViewport();
 
   const trackObjectUrl = useCallback((url: string) => {
     activeObjectUrlsRef.current.add(url);
@@ -108,14 +133,18 @@ export function App() {
 
   const activeTheme: StudioThemeId = getThemeForScene(activeScene);
   const activeThemeScenes = THEME_SCENES[activeTheme];
-  const fitScale = useViewportScale(activeScene);
+  const { fitScale, responsiveGrid, responsiveCharismaWave, responsiveHourglass } = useViewportScale(
+    activeScene,
+    stageViewportRef,
+    isCapturing
+  );
   const studioBg = useMemo(() => getStudioBackgroundStyle(backgroundTone), [backgroundTone]);
   const isLightSurface = isTransparentBackdrop ? true : studioBg.isLightSurface;
   const visibleFrames = SCENE_FRAME_INDICES[activeScene];
   const visibleFrameCount = SCENE_VISIBLE_COUNTS[activeScene];
 
   useEffect(() => {
-    saveStudioSettings({
+    scheduleSaveStudioSettings({
       activeScene,
       backgroundTone,
       isTransparentBackdrop,
@@ -140,12 +169,20 @@ export function App() {
       dragDepthRef.current = 0;
       setIsWindowDragOver(false);
     };
+    const handleFlushStorage = () => {
+      flushScheduledStudioSettings();
+    };
     window.addEventListener('dragend', clearDragOverlay);
     window.addEventListener('blur', clearDragOverlay);
+    window.addEventListener('pagehide', handleFlushStorage);
+    window.addEventListener('beforeunload', handleFlushStorage);
     return () => {
       isMountedRef.current = false;
+      flushScheduledStudioSettings();
       window.removeEventListener('dragend', clearDragOverlay);
       window.removeEventListener('blur', clearDragOverlay);
+      window.removeEventListener('pagehide', handleFlushStorage);
+      window.removeEventListener('beforeunload', handleFlushStorage);
       trackedUrls.forEach((url) => {
         URL.revokeObjectURL(url);
       });
@@ -154,7 +191,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedFrameIndex !== null && selectedFrameIndex > visibleFrameCount) {
+    if (selectedFrameIndex !== null && (selectedFrameIndex < 1 || selectedFrameIndex > visibleFrameCount)) {
       setSelectedFrameIndex(1);
     }
   }, [visibleFrameCount, selectedFrameIndex]);
@@ -355,7 +392,9 @@ export function App() {
       if (target) {
         revokeObjectUrl(target.objectUrl);
       }
-      setAssets((prev) => prev.filter((item) => item.id !== assetId));
+      const nextAssets = assetsRef.current.filter((item) => item.id !== assetId);
+      assetsRef.current = nextAssets;
+      setAssets(nextAssets);
       setFrameOverrides((prev) => {
         let changed = false;
         const next: Record<number, FrameOverride> = {};
@@ -376,6 +415,7 @@ export function App() {
     assetsRef.current.forEach((asset) => {
       revokeObjectUrl(asset.objectUrl);
     });
+    assetsRef.current = [];
     setAssets([]);
     setFrameOverrides({});
     toastRef.current?.show('Cleared all uploaded assets.', 'info');
@@ -384,33 +424,50 @@ export function App() {
   const handleSelectBackgroundTone = useCallback((tone: number) => {
     setIsTransparentBackdrop(false);
     setBackgroundTone(tone);
+    toastRef.current?.announce(`Backdrop tone set to ${tone}%`);
   }, []);
 
   const handleToggleTransparentBackdrop = useCallback(() => {
-    setIsTransparentBackdrop((prev) => !prev);
+    setIsTransparentBackdrop((prev) => {
+      const next = !prev;
+      toastRef.current?.announce(next ? 'Transparent PNG backdrop enabled' : 'Solid studio backdrop enabled');
+      return next;
+    });
   }, []);
 
   const handleToggleBezel = useCallback(() => {
-    setShowBezel((prev) => !prev);
+    setShowBezel((prev) => {
+      const next = !prev;
+      toastRef.current?.announce(next ? 'Device bezel shown' : 'Frameless display mode enabled');
+      return next;
+    });
   }, []);
 
   const handleSelectBezelFinish = useCallback((finish: BezelFinishId) => {
     setShowBezel(true);
     setBezelFinish(finish);
+    toastRef.current?.announce(`Bezel finish changed to ${finish}`);
   }, []);
 
   const handleSelectScene = useCallback((scene: StudioPageId) => {
     setActiveScene(scene);
+    toastRef.current?.announce(`Selected ${SCENE_STAGE_LABELS[scene]}`);
     if (isAngleScene(scene)) {
       setLastAngleScene(scene);
     } else if (isCharismaScene(scene)) {
       setLastCharismaScene(scene);
+    } else if (isWaveScene(scene)) {
+      setLastWaveScene(scene);
+    } else if (isDynamicScene(scene)) {
+      setLastDynamicScene(scene);
     } else if (isTerminalScene(scene)) {
       setLastTerminalScene(scene);
     } else if (isScribeScene(scene)) {
       setLastScribeScene(scene);
     } else if (isHourglassScene(scene)) {
       setLastHourglassScene(scene);
+    } else if (isLiveActionScene(scene)) {
+      setLastLiveActionScene(scene);
     } else {
       setLastGridScene(scene);
     }
@@ -422,12 +479,18 @@ export function App() {
         setActiveScene((current) => (isAngleScene(current) ? current : lastAngleScene));
       } else if (theme === 'charisma') {
         setActiveScene((current) => (isCharismaScene(current) ? current : lastCharismaScene));
+      } else if (theme === 'wave') {
+        setActiveScene((current) => (isWaveScene(current) ? current : lastWaveScene));
+      } else if (theme === 'dynamic') {
+        setActiveScene((current) => (isDynamicScene(current) ? current : lastDynamicScene));
       } else if (theme === 'terminal') {
         setActiveScene((current) => (isTerminalScene(current) ? current : lastTerminalScene));
       } else if (theme === 'scribe') {
         setActiveScene((current) => (isScribeScene(current) ? current : lastScribeScene));
       } else if (theme === 'hourglass') {
         setActiveScene((current) => (isHourglassScene(current) ? current : lastHourglassScene));
+      } else if (theme === 'live-action') {
+        setActiveScene((current) => (isLiveActionScene(current) ? current : lastLiveActionScene));
       } else {
         setActiveScene((current) => (isGridScene(current) ? current : lastGridScene));
       }
@@ -435,10 +498,13 @@ export function App() {
     [
       lastAngleScene,
       lastCharismaScene,
+      lastDynamicScene,
       lastGridScene,
       lastHourglassScene,
+      lastLiveActionScene,
       lastScribeScene,
       lastTerminalScene,
+      lastWaveScene,
     ]
   );
 
@@ -489,7 +555,12 @@ export function App() {
 
   const handleReloadFrames = useCallback(() => {
     setReloadNonce((prev) => prev + 1);
-    toastRef.current?.show('Reloaded active frames.', 'info', 2200);
+    setScaleResetNonce((prev) => prev + 1);
+    savePersistedScalePercent(100);
+    if (stageContentRef.current) {
+      stageContentRef.current.style.setProperty('--stage-user-scale', '1');
+    }
+    toastRef.current?.show('Reloaded active frames and reset scale to 100%.', 'info', 2400);
   }, []);
 
   const handleToggleMinimized = useCallback(() => {
@@ -518,46 +589,80 @@ export function App() {
     setAssetTrayOpen(true);
   }, []);
 
+  const handleRecoverResetSettings = useCallback(() => {
+    setActiveScene(DEFAULT_STUDIO_SETTINGS.activeScene);
+    setBackgroundTone(DEFAULT_STUDIO_SETTINGS.backgroundTone);
+    setIsTransparentBackdrop(DEFAULT_STUDIO_SETTINGS.isTransparentBackdrop);
+    setShowBezel(DEFAULT_STUDIO_SETTINGS.showBezel);
+    setBezelFinish(DEFAULT_STUDIO_SETTINGS.bezelFinish);
+    setCustomUrl(DEFAULT_STUDIO_SETTINGS.customUrl);
+    setFrameOverrides({});
+    setSelectedFrameIndex(1);
+    setThemeMenuOpen(false);
+    setAssetTrayOpen(false);
+    setUrlPopoverOpen(false);
+    setIsMinimized(false);
+    setScaleResetNonce((prev) => prev + 1);
+    if (stageContentRef.current) {
+      stageContentRef.current.style.setProperty('--stage-user-scale', '1');
+    }
+  }, []);
+
   const handleScreenshot = useCallback(async () => {
-    if (isCaptureBusy) return;
+    if (captureInFlightRef.current) return;
+    captureInFlightRef.current = true;
     setIsCaptureBusy(true);
     setThemeMenuOpen(false);
     setAssetTrayOpen(false);
     setUrlPopoverOpen(false);
 
-    let contentBounds: { widthRatio: number; heightRatio: number } | null = null;
-    const stageEl = stageContentRef.current;
-    if (stageEl && window.innerWidth > 0 && window.innerHeight > 0) {
-      const rect = stageEl.getBoundingClientRect();
-      contentBounds = {
-        widthRatio: Math.min(1, rect.width / window.innerWidth),
-        heightRatio: Math.min(1, rect.height / window.innerHeight),
-      };
+    try {
+      let contentBounds: { widthRatio: number; heightRatio: number } | null = null;
+      const stageEl = stageContentRef.current;
+      if (stageEl && window.innerWidth > 0 && window.innerHeight > 0) {
+        const rect = stageEl.getBoundingClientRect();
+        if (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          Number.isFinite(rect.width) &&
+          Number.isFinite(rect.height)
+        ) {
+          contentBounds = {
+            widthRatio: Math.min(1, rect.width / window.innerWidth),
+            heightRatio: Math.min(1, rect.height / window.innerHeight),
+          };
+        }
+      }
+
+      const outcome = await captureCleanShowcase({
+        aspectRatio: '16:9',
+        sceneLabel: isGridScene(activeScene) ? `${activeScene}up` : activeScene,
+        transparentBackground: isTransparentBackdrop,
+        backdropEdgeColor: studioBg.solidEdge,
+        contentBounds,
+        onHideChrome: () => {
+          if (isMountedRef.current) setIsCapturing(true);
+        },
+        onRestoreChrome: () => {
+          if (isMountedRef.current) setIsCapturing(false);
+        },
+      });
+
+      if (!isMountedRef.current) return;
+
+      if (outcome.status === 'saved') {
+        toastRef.current?.show(`Saved ${outcome.filename}`, 'success', 3800);
+      } else if (outcome.status === 'unsupported' || outcome.status === 'error') {
+        toastRef.current?.show(outcome.reason, 'error', 4800);
+      }
+    } finally {
+      captureInFlightRef.current = false;
+      if (isMountedRef.current) {
+        setIsCapturing(false);
+        setIsCaptureBusy(false);
+      }
     }
-
-    const outcome = await captureCleanShowcase({
-      aspectRatio: '16:9',
-      sceneLabel: isGridScene(activeScene) ? `${activeScene}up` : activeScene,
-      transparentBackground: isTransparentBackdrop,
-      backdropEdgeColor: studioBg.solidEdge,
-      contentBounds,
-      onHideChrome: () => {
-        if (isMountedRef.current) setIsCapturing(true);
-      },
-      onRestoreChrome: () => {
-        if (isMountedRef.current) setIsCapturing(false);
-      },
-    });
-
-    if (!isMountedRef.current) return;
-    setIsCaptureBusy(false);
-
-    if (outcome.status === 'saved') {
-      toastRef.current?.show(`Saved ${outcome.filename}`, 'success', 3800);
-    } else if (outcome.status === 'unsupported' || outcome.status === 'error') {
-      toastRef.current?.show(outcome.reason, 'error', 4800);
-    }
-  }, [activeScene, isCaptureBusy, isTransparentBackdrop, studioBg.solidEdge]);
+  }, [activeScene, isTransparentBackdrop, studioBg.solidEdge]);
 
   const handleWindowDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (event.dataTransfer.types.includes('Files')) {
@@ -575,7 +680,13 @@ export function App() {
 
   const handleWindowDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (event.dataTransfer.types.includes('Files')) {
-      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      const leftViewport =
+        event.relatedTarget === null ||
+        event.clientX <= 0 ||
+        event.clientY <= 0 ||
+        event.clientX >= window.innerWidth ||
+        event.clientY >= window.innerHeight;
+      dragDepthRef.current = leftViewport ? 0 : Math.max(0, dragDepthRef.current - 1);
       if (dragDepthRef.current === 0) {
         setIsWindowDragOver(false);
       }
@@ -611,6 +722,14 @@ export function App() {
       : {}
     : { background: studioBg.background };
 
+  const isEdgeBleedScene =
+    activeScene === 'peek' ||
+    activeScene === 'offset' ||
+    activeScene === 'quad' ||
+    activeScene === 'masonry' ||
+    activeScene === 'tilt-right' ||
+    activeScene === 'tilt-left';
+
   return (
     <div
       onDragEnter={handleWindowDragEnter}
@@ -618,8 +737,11 @@ export function App() {
       onDragLeave={handleWindowDragLeave}
       onDropCapture={handleWindowDropCapture}
       onDrop={handleWindowDrop}
-      style={stageBackdropStyle}
-      className={`relative h-dvh w-screen overflow-hidden overflow-x-clip flex items-center justify-center ${
+      style={{
+        ...stageBackdropStyle,
+        height: 'min(100dvh, var(--app-viewport-height, 100dvh))',
+      }}
+      className={`relative w-full min-h-0 overflow-x-clip flex items-center justify-center ${
         isTransparentBackdrop && !isCapturing ? 'studio-checkerboard' : ''
       } ${isCapturing ? 'studio-hide-cursor' : ''}`}
     >
@@ -637,86 +759,99 @@ export function App() {
         isLightSurface={isLightSurface}
       />
 
-      <main
-        aria-label={SCENE_STAGE_LABELS[activeScene]}
-        className="w-full h-full flex items-center justify-center overflow-hidden overflow-x-clip select-none"
-      >
-        <div
-          ref={stageContentRef}
-          style={{ '--stage-fit-scale': fitScale } as React.CSSProperties}
-          className={`studio-stage-scaler ${SCENE_LAYOUT_CLASSES[activeScene]}`}
+      <StudioErrorBoundary onResetSettings={handleRecoverResetSettings}>
+        <main
+          ref={stageViewportRef}
+          aria-label={SCENE_STAGE_LABELS[activeScene]}
+          className={`relative isolate z-0 w-full h-full flex items-center justify-center select-none ${
+            isEdgeBleedScene ? 'overflow-hidden' : 'overflow-x-clip overflow-y-visible'
+          } ${isCapturing ? '' : 'studio-stage-clearance'}`}
         >
-          <StageComposition
-            activeScene={activeScene}
-            showBezel={showBezel}
-            bezelFinish={bezelFinish}
-            backgroundTone={backgroundTone}
-            isTransparentBackdrop={isTransparentBackdrop}
-            isCapturing={isCapturing}
-            customUrl={customUrl}
-            reloadNonce={reloadNonce}
-            frameOverrides={frameOverrides}
-            selectedFrameIndex={selectedFrameIndex}
-            onSelectFrame={setSelectedFrameIndex}
-            onAssignAssetId={handleAssignAssetId}
-            onDropFilesOnFrame={handleDropFilesOnFrame}
-            onToggleOverrideFit={handleToggleOverrideFit}
-            onClearOverride={handleClearOverride}
-            onOpenAssetTray={handleOpenAssetTray}
-          />
-        </div>
-      </main>
+          <div
+            ref={stageContentRef}
+            style={{ '--stage-fit-scale': fitScale } as React.CSSProperties}
+            className={`studio-stage-scaler ${
+              responsiveGrid || responsiveCharismaWave || responsiveHourglass
+                ? 'flex items-center justify-center'
+                : SCENE_LAYOUT_CLASSES[activeScene]
+            }`}
+          >
+            <StageComposition
+              activeScene={activeScene}
+              responsiveGrid={responsiveGrid}
+              responsiveCharismaWave={responsiveCharismaWave}
+              responsiveHourglass={responsiveHourglass}
+              showBezel={showBezel}
+              bezelFinish={bezelFinish}
+              backgroundTone={backgroundTone}
+              isTransparentBackdrop={isTransparentBackdrop}
+              isCapturing={isCapturing}
+              customUrl={customUrl}
+              reloadNonce={reloadNonce}
+              frameOverrides={frameOverrides}
+              selectedFrameIndex={selectedFrameIndex}
+              onSelectFrame={setSelectedFrameIndex}
+              onAssignAssetId={handleAssignAssetId}
+              onDropFilesOnFrame={handleDropFilesOnFrame}
+              onToggleOverrideFit={handleToggleOverrideFit}
+              onClearOverride={handleClearOverride}
+              onOpenAssetTray={handleOpenAssetTray}
+            />
+          </div>
+        </main>
 
-      <AssetTray
-        isOpen={!isCapturing && !isMinimized && assetTrayOpen}
-        isLightSurface={isLightSurface}
-        assets={assets}
-        visibleFrameCount={visibleFrameCount}
-        selectedFrameIndex={selectedFrameIndex}
-        onAddFiles={addPreparedFiles}
-        onAssignAssetToFrame={handleAssignAssetToFrame}
-        onAutoFillFrames={handleAutoFillFrames}
-        onRemoveAsset={handleRemoveAsset}
-        onClearAssets={handleClearAssets}
-        onClose={() => setAssetTrayOpen(false)}
-      />
+        <AssetTray
+          isOpen={!isCapturing && !isMinimized && assetTrayOpen}
+          isLightSurface={isLightSurface}
+          assets={assets}
+          visibleFrameCount={visibleFrameCount}
+          selectedFrameIndex={selectedFrameIndex}
+          onAddFiles={addPreparedFiles}
+          onAssignAssetToFrame={handleAssignAssetToFrame}
+          onAutoFillFrames={handleAutoFillFrames}
+          onRemoveAsset={handleRemoveAsset}
+          onClearAssets={handleClearAssets}
+          onClose={() => setAssetTrayOpen(false)}
+        />
 
-      <StudioControls
-        activeTheme={activeTheme}
-        activeScene={activeScene}
-        backgroundTone={backgroundTone}
-        isTransparentBackdrop={isTransparentBackdrop}
-        showBezel={showBezel}
-        bezelFinish={bezelFinish}
-        isLightSurface={isLightSurface}
-        isCapturing={isCapturing}
-        isMinimized={isMinimized}
-        assetCount={assets.length}
-        themeMenuOpen={themeMenuOpen}
-        assetTrayOpen={assetTrayOpen}
-        urlPopoverOpen={urlPopoverOpen}
-        customUrl={customUrl}
-        stageScaleTargetRef={stageContentRef}
-        onToggleThemeMenu={handleToggleThemeMenu}
-        onCloseThemeMenu={handleCloseThemeMenu}
-        onSelectTheme={handleSelectTheme}
-        onSelectScene={handleSelectScene}
-        onToggleTransparentBackdrop={handleToggleTransparentBackdrop}
-        onSelectBackgroundTone={handleSelectBackgroundTone}
-        onToggleBezel={handleToggleBezel}
-        onSelectBezelFinish={handleSelectBezelFinish}
-        onToggleAssetTray={handleToggleAssetTray}
-        onToggleUrlPopover={handleToggleUrlPopover}
-        onCloseUrlPopover={handleCloseUrlPopover}
-        onApplyCustomUrl={handleApplyCustomUrl}
-        onClearCustomUrl={handleClearCustomUrl}
-        onResetFrames={handleResetFrames}
-        onReloadFrames={handleReloadFrames}
-        onToggleMinimized={handleToggleMinimized}
-      />
+        <StudioControls
+          activeTheme={activeTheme}
+          activeScene={activeScene}
+          backgroundTone={backgroundTone}
+          isTransparentBackdrop={isTransparentBackdrop}
+          showBezel={showBezel}
+          bezelFinish={bezelFinish}
+          isLightSurface={isLightSurface}
+          isCapturing={isCapturing}
+          isMinimized={isMinimized}
+          assetCount={assets.length}
+          themeMenuOpen={themeMenuOpen}
+          assetTrayOpen={assetTrayOpen}
+          urlPopoverOpen={urlPopoverOpen}
+          customUrl={customUrl}
+          scaleResetNonce={scaleResetNonce}
+          stageScaleTargetRef={stageContentRef}
+          onToggleThemeMenu={handleToggleThemeMenu}
+          onCloseThemeMenu={handleCloseThemeMenu}
+          onSelectTheme={handleSelectTheme}
+          onSelectScene={handleSelectScene}
+          onToggleTransparentBackdrop={handleToggleTransparentBackdrop}
+          onSelectBackgroundTone={handleSelectBackgroundTone}
+          onToggleBezel={handleToggleBezel}
+          onSelectBezelFinish={handleSelectBezelFinish}
+          onToggleAssetTray={handleToggleAssetTray}
+          onToggleUrlPopover={handleToggleUrlPopover}
+          onCloseUrlPopover={handleCloseUrlPopover}
+          onApplyCustomUrl={handleApplyCustomUrl}
+          onClearCustomUrl={handleClearCustomUrl}
+          onResetFrames={handleResetFrames}
+          onReloadFrames={handleReloadFrames}
+          onToggleMinimized={handleToggleMinimized}
+        />
+      </StudioErrorBoundary>
 
       {!isCapturing && isWindowDragOver && (
-        <div className="pointer-events-none fixed inset-0 z-50 bg-black/45 backdrop-blur-xs flex items-center justify-center p-6">
+        <div className="pointer-events-none fixed inset-0 z-[60] bg-black/45 backdrop-blur-xs flex items-center justify-center p-6">
           <div className="rounded-2xl border border-white/25 bg-neutral-950/92 text-white px-6 py-4 shadow-2xl flex items-center gap-3">
             <Upload className="w-5 h-5 shrink-0" aria-hidden="true" />
             <span className="text-sm font-semibold">

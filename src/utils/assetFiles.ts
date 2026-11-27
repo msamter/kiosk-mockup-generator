@@ -218,7 +218,12 @@ async function downscaleOversizedImage(
   };
 }
 
+const IMAGE_DECODE_TIMEOUT_MS = 10000;
+
 export async function prepareUploadedAsset(file: File): Promise<UploadedAsset> {
+  if (file.size <= 0) {
+    throw new Error(`"${file.name}" is empty and cannot be loaded.`);
+  }
   if (file.size > MAX_IMAGE_FILE_BYTES) {
     throw new Error(`"${file.name}" exceeds the 25 MB image limit.`);
   }
@@ -229,16 +234,34 @@ export async function prepareUploadedAsset(file: File): Promise<UploadedAsset> {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.decoding = 'async';
-    img.onload = () => {
+    let settled = false;
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
       img.onload = null;
       img.onerror = null;
+    };
+
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      URL.revokeObjectURL(rawObjectUrl);
+      reject(new Error(message));
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      fail(`Timed out decoding image "${file.name}".`);
+    }, IMAGE_DECODE_TIMEOUT_MS);
+
+    img.onload = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve(img);
     };
     img.onerror = () => {
-      img.onload = null;
-      img.onerror = null;
-      URL.revokeObjectURL(rawObjectUrl);
-      reject(new Error(`Unable to decode image "${file.name}".`));
+      fail(`Unable to decode image "${file.name}".`);
     };
     img.src = rawObjectUrl;
   });

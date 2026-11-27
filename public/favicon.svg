@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Kiosk">
+  <rect width="512" height="512" rx="96" fill="#ffffff" />
+  <path
+    fill="#000000"
+    d="M122 356L141 172h79l36 86 36-86h79l19 184h-69l-9-101-43 101h-26l-43-101-9 101h-69z"
+  />
+</svg>
